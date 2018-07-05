@@ -1,0 +1,166 @@
+#include <reg52.h>
+#include <math.h>
+#include "delay.h"
+#include "uart.h"
+#include "timer.h"
+#include "lcd1602.h"
+#include "ds18b20.h"
+
+sbit LED1 = P1^0;
+sbit LED2 = P1^1;
+
+sbit BEEP = P3^6;
+
+uchar Rev_flag = 0;
+
+extern unsigned short Uart_Con;
+extern char Uart_Buf[BUF_SIZE];
+
+//发送二维码短信
+void GSM_Send_QRcode_SMS(const uchar* buffer, unsigned short length, int temp)
+{
+	unsigned char count;
+	unsigned char datas[] = {0, 0, 0, 0, 0};
+	unsigned int tmp = 0;
+
+	tmp = abs(temp);
+	datas[0] = tmp / 10000;
+	datas[1] = tmp % 10000 / 1000;
+	datas[2] = tmp % 1000 / 100;
+	datas[3] = tmp % 100 / 10;
+	datas[4] = tmp % 10;
+	
+	Uart_SendString("AT+CMGF=1");Uart_SendData(0X0D);Uart_SendData(0X0A);
+	delayMs(100);
+	Uart_SendString("AT+CSCS=\"GSM\"");Uart_SendData(0X0D);Uart_SendData(0X0A);
+	delayMs(100);
+	Uart_SendString("AT+CMGS=\"15323881996\"");Uart_SendData(0X0D);Uart_SendData(0X0A);
+	delayMs(100);
+	
+	//*************************短信内容*************************
+	//发送当前温度
+	Uart_SendString("Temperature:");
+	if(temp>0)
+		Uart_SendData('+');
+	else
+		Uart_SendData('-');
+	
+	if(datas[0] != 0)
+	{
+		Uart_SendData('0'+datas[0]);
+	}
+	for(count = 1; count != 5; count++)
+	{
+		Uart_SendData('0'+datas[count]);
+		if(count == 2)
+		{
+			Uart_SendData('.');
+		}
+	}
+	//发送回车
+	Uart_SendData(0X0D);Uart_SendData(0X0A);
+
+	//发送二维码数据
+	Uart_SendString("QRcode:");
+	Uart_SendBuffer(buffer, length);
+	delayMs(100);
+	//**********************************************************
+	Uart_SendData(0X1A);
+}
+
+
+//发送报警短信
+void GSM_Send_Alarm_SMS(void)
+{
+	//发送报警短信
+	Uart_SendString("AT+CMGF=1");Uart_SendData(0X0D);Uart_SendData(0X0A);
+	delayMs(100);
+	Uart_SendString("AT+CSCS=\"GSM\"");Uart_SendData(0X0D);Uart_SendData(0X0A);
+	delayMs(100);
+	Uart_SendString("AT+CMGS=\"15323881996\"");Uart_SendData(0X0D);Uart_SendData(0X0A);
+	delayMs(100);
+	Uart_SendString("Temperature is too high!");
+	delayMs(100);
+	Uart_SendData(0X1A);
+}
+
+void main(void)
+{
+	int temp = 0;			//测量温度值
+	int temp_h = 3200;	
+	uchar j;
+	uchar send_flag = 0;
+	
+	Uart_Init();
+	Timer_Init();
+	LCD1602_Init();
+
+ 	LCD1602_Write_String(0, 0, "Welcom!");
+	
+	delayMs(1000);delayMs(1000);
+	LCD1602_Clear();
+	
+	// 开全局中断
+	EA = 1;
+	
+	DS18B20_Start();
+	while(1)
+	{
+		delayMs(1000);
+		LED1 = ~LED1;
+		temp = DS18B20_Get_Temp();
+		LCD1602_Disp_Temp(0, temp);
+//		Uart_SendString("glory!\r\n");
+
+		// 超过设定温度,蜂鸣器报警,并LED2点亮
+		if(temp > temp_h)
+		{
+			for(j=200;j>0;j--)
+			{
+				BEEP=~BEEP;       //输出频率1KHz
+				delay500();       //延时500us
+			}
+			for(j=200;j>0;j--)
+			{
+				BEEP=~BEEP;       //输出频率500Hz
+				delay500();       //延时1ms
+				delay500();
+			}	
+			BEEP = 1;
+			LED2 = 0;
+			
+			if(send_flag == 0)
+			{
+				send_flag = 1;
+				//发送报警短信
+				GSM_Send_Alarm_SMS();
+			}
+		}
+		else
+		{
+			LED2 = 1;
+			// 等下降到一定温度,满足条件后才允许再次发送短信
+			if(temp <temp_h - 200)
+				send_flag = 0;
+		}
+		
+		// 串口接收到一帧数据
+		if(Rev_flag == 1)
+		{
+			Rev_flag = 0;
+			
+			//1602显示
+			LCD1602_Clear();
+ 			LCD1602_QRcode(Uart_Buf, Uart_Con);
+			
+			//发送二维码短信
+			GSM_Send_QRcode_SMS(Uart_Buf, Uart_Con, temp);
+			
+			LCD1602_Clear();
+			Uart_Con = 0;
+			ES = 1;
+		}
+		// 开始下一轮测温
+		DS18B20_Start();
+	}
+}

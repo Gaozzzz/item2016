@@ -1,0 +1,31 @@
+#include "timer.h"
+
+// 初始化定时器0, 50ms中断一次
+void Timer_Init(void)
+{
+	TMOD &= 0xF0;		
+	TMOD |= 0x01;
+	TL0 = 0x00;		//设置定时初值
+	TH0 = 0x4C;		//设置定时初值
+	TF0 = 0;
+	ET0 = 1;
+// 	TR0 = 1;		//开始计时
+}
+
+
+
+extern unsigned char Rev_flag;
+
+void Timer0_ISR(void) interrupt 1
+{
+	TR0=0;							//关定时器
+// 	TL0 = 0x00;		//设置定时初值
+// 	TH0 = 0x4C;		//设置定时初值
+	
+	Rev_flag = 1;
+	ES = 0;
+	
+	LED3 = ~LED3;
+	
+//	TR0=1;//开定时器
+}
